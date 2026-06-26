@@ -4,7 +4,6 @@
 #include <vector>
 #include <set>
 #include <mutex>
-#include <future>
 
 namespace Shadow {
 
@@ -14,7 +13,8 @@ class Engine;   // forward-declared for the Module callback signature
 enum class TargetType {
     FILE_TARGET,
     DIRECTORY_TARGET,
-    REGISTRY_KEY
+    REGISTRY_KEY,
+    SYSTEM_ACTION
 };
 
 // ─── Module descriptor ──────────────────────────────────────────────────────
@@ -54,7 +54,6 @@ public:
     /// "Skipped", and execution continues.
     bool processTarget(const std::string& path, TargetType type);
 
-private:
 private:
     std::vector<Module>   m_modules;
     int                   m_nextId = 1;

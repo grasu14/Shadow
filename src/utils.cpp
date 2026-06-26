@@ -94,6 +94,18 @@ void clearScreen() {
     }
 }
 
+void disableQuickEdit() {
+    HANDLE hInput = GetStdHandle(STD_INPUT_HANDLE);
+    if (hInput == INVALID_HANDLE_VALUE) return;
+
+    DWORD mode = 0;
+    if (GetConsoleMode(hInput, &mode)) {
+        mode &= ~ENABLE_QUICK_EDIT_MODE;
+        mode |= ENABLE_EXTENDED_FLAGS;
+        SetConsoleMode(hInput, mode);
+    }
+}
+
 } // namespace Utils
 
 namespace Registry {

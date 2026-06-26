@@ -82,8 +82,11 @@ void Engine::execute() {
         return;
     }
 
-    // Execute each enabled module asynchronously.
-    std::vector<std::future<void>> futures;
+    // Execute each enabled module sequentially.
+    // Sequential execution eliminates race conditions on shared Engine state
+    // (IS_DRY_RUN, m_modifiedParentPaths, logger counters) and provides no
+    // real performance benefit since all modules perform filesystem I/O on
+    // the same disk.
     for (auto& mod : m_modules) {
         if (!mod.enabled) continue;
 
@@ -91,26 +94,19 @@ void Engine::execute() {
         log.log(LogLevel::INFO, "--- Module: " + mod.name + " ---");
         log.log(LogLevel::DEBUG_DETAIL, "    " + mod.description);
 
-        futures.push_back(std::async(std::launch::async, [&mod, this, &log]() {
-            try {
-                mod.execute(*this);
-            } catch (const std::exception& e) {
-                log.log(LogLevel::ERR,
-                        "Module '" + mod.name +
-                        "' threw an unhandled exception: " + e.what());
-            } catch (...) {
-                log.log(LogLevel::ERR,
-                        "Module '" + mod.name +
-                        "' threw an unknown exception.");
-            }
-            log.log(LogLevel::DEBUG_DETAIL,
-                    "Module '" + mod.name + "' finished.");
-        }));
-    }
-
-    // Wait for all module threads to complete
-    for (auto& f : futures) {
-        f.get();
+        try {
+            mod.execute(*this);
+        } catch (const std::exception& e) {
+            log.log(LogLevel::ERR,
+                    "Module '" + mod.name +
+                    "' threw an unhandled exception: " + e.what());
+        } catch (...) {
+            log.log(LogLevel::ERR,
+                    "Module '" + mod.name +
+                    "' threw an unknown exception.");
+        }
+        log.log(LogLevel::DEBUG_DETAIL,
+                "Module '" + mod.name + "' finished.");
     }
 
     // ── Summary ─────────────────────────────────────────────────────────────
@@ -124,7 +120,15 @@ void Engine::execute() {
             "  |  Errors : " + std::to_string(log.getErrorCount()));
     log.log(LogLevel::SUMMARY, "============================================");
 
-    std::string logPath = Utils::getDesktopPath() + "\\shadow_simulation_log.txt";
+    // Use mode-aware log filename with timestamp
+    std::string timestamp = Utils::getCurrentDateTimeFormatted();
+    // Replace colons and spaces for filesystem compatibility
+    for (auto& c : timestamp) {
+        if (c == ':' || c == ' ') c = '_';
+    }
+    std::string logName = std::string("shadow_") +
+        (IS_DRY_RUN ? "dryrun_" : "live_") + timestamp + ".txt";
+    std::string logPath = Utils::getDesktopPath() + "\\" + logName;
     log.log(LogLevel::INFO, "  Log saved to: " + logPath);
 
     // ── Skipped items detail ────────────────────────────────────────────────
@@ -259,6 +263,14 @@ bool Engine::processTarget(const std::string& path, TargetType type) {
                 Timestomp::applyToRegistryKey(hKey);
 
                 RegCloseKey(hKey);
+                log.logAction(path, ActionStatus::MODIFIED);
+                return true;
+            }
+
+            // SYSTEM_ACTION is a pseudo-target type used to log operations that
+            // don't correspond to a single file/key (e.g., DNS cache flush).
+            // In live mode it just records the action in the log.
+            case TargetType::SYSTEM_ACTION: {
                 log.logAction(path, ActionStatus::MODIFIED);
                 return true;
             }

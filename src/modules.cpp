@@ -4,82 +4,226 @@
 #include "sqlite_parser.h"
 #include "prefetch_parser.h"
 #include "config.h"
+#include "logger.h"
 
 #include <Windows.h>
+#include <ShlObj.h>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <algorithm>
+#include <cctype>
 
 namespace fs = std::filesystem;
 
 namespace Shadow {
 namespace Modules {
 
-// ─── Basic Binary/String Search Helper ──────────────────────────────────────
+// ─── Safe user profile path resolution ──────────────────────────────────────
+
+static std::string getUserProfilePath() {
+    // Use the Windows API instead of deprecated getenv("USERNAME")
+    char profilePath[MAX_PATH]{};
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_PROFILE, nullptr, 0, profilePath))) {
+        return std::string(profilePath);
+    }
+    // Fallback via environment variable (safe API)
+    char buf[MAX_PATH]{};
+    DWORD len = GetEnvironmentVariableA("USERPROFILE", buf, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        return std::string(buf, len);
+    }
+    return "C:\\Users\\Default";
+}
+
+static std::string getAppDataPath() {
+    std::string profile = getUserProfilePath();
+    return profile + "\\AppData";
+}
+
+// ─── Chunked Binary/String Search Helper ────────────────────────────────────
+// Reads files in chunks with overlap to catch matches spanning chunk boundaries.
+// Prevents OOM on large cache files (hundreds of MB).
+
 static bool fileContainsTargetStrings(const std::string& path,
                                       const std::vector<std::string>& targets) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) return false;
 
-    // Read the file into memory (in a real scenario, this should be buffered/chunked)
-    std::string content((std::istreambuf_iterator<char>(file)),
-                         std::istreambuf_iterator<char>());
-
-    for (const auto& target : targets) {
-        if (content.find(target) != std::string::npos) {
-            return true;
-        }
+    // Determine the longest target string for overlap calculation
+    size_t maxTargetLen = 0;
+    for (const auto& t : targets) {
+        if (t.size() > maxTargetLen) maxTargetLen = t.size();
     }
+    if (maxTargetLen == 0) return false;
+
+    // Pre-lowercase all targets for case-insensitive matching
+    std::vector<std::string> targetsLower;
+    targetsLower.reserve(targets.size());
+    for (const auto& t : targets) {
+        std::string lower = t;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        targetsLower.push_back(std::move(lower));
+    }
+
+    constexpr size_t CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB chunks
+    size_t overlapSize = maxTargetLen - 1;
+
+    std::vector<char> buffer(CHUNK_SIZE + overlapSize);
+    size_t carryOver = 0;
+
+    while (file) {
+        file.read(buffer.data() + carryOver,
+                  static_cast<std::streamsize>(CHUNK_SIZE));
+        size_t bytesRead = static_cast<size_t>(file.gcount());
+        if (bytesRead == 0 && carryOver == 0) break;
+
+        size_t totalBytes = carryOver + bytesRead;
+
+        // Lowercase the chunk for case-insensitive search
+        std::string chunk(buffer.data(), totalBytes);
+        std::transform(chunk.begin(), chunk.end(), chunk.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        for (const auto& target : targetsLower) {
+            if (chunk.find(target) != std::string::npos) {
+                return true;
+            }
+        }
+
+        // Keep the tail as overlap for the next chunk
+        if (totalBytes > overlapSize && bytesRead > 0) {
+            std::memmove(buffer.data(),
+                         buffer.data() + totalBytes - overlapSize,
+                         overlapSize);
+            carryOver = overlapSize;
+        } else {
+            carryOver = 0;
+        }
+
+        if (bytesRead == 0) break;
+    }
+
     return false;
 }
 
-// ─── Local Application Caches ───────────────────────────────────────────────
-static void cleanLocalApplicationCaches(Engine& engine) {
-    std::string appData = Utils::getDesktopPath() + "\\..\\AppData";
-    if (appData.find("Desktop") != std::string::npos) {
-        // Fallback or exact translation depending on system layout
-#pragma warning(push)
-#pragma warning(disable: 4996)
-        appData = "C:\\Users\\" + std::string(getenv("USERNAME")) + "\\AppData";
-#pragma warning(pop)
-    }
+// ─── Browser path discovery ─────────────────────────────────────────────────
 
-    std::vector<std::string> searchPaths = {
-        appData + "\\Roaming\\Discord\\Cache\\Cache_Data",
-        appData + "\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\Cache_Data"
+struct BrowserProfile {
+    std::string name;
+    std::string historyPath;       // Path to SQLite History DB
+    std::string cachePath;         // Path to cache directory
+    bool        isFirefox;         // Uses moz_places schema instead of Chromium
+};
+
+static std::vector<BrowserProfile> discoverBrowserProfiles() {
+    std::vector<BrowserProfile> profiles;
+    std::string appData = getAppDataPath();
+
+    // Chromium-based browsers: all use the same History schema
+    struct ChromiumBrowser {
+        const char* name;
+        const char* relativePath;
     };
 
-    const std::vector<std::string>& cacheTargets = Config::instance().getAppCacheTargets();
-    if (cacheTargets.empty()) return;
+    ChromiumBrowser chromiumBrowsers[] = {
+        {"Chrome",  "\\Local\\Google\\Chrome\\User Data\\Default"},
+        {"Edge",    "\\Local\\Microsoft\\Edge\\User Data\\Default"},
+        {"Brave",   "\\Local\\BraveSoftware\\Brave-Browser\\User Data\\Default"},
+        {"Opera",   "\\Roaming\\Opera Software\\Opera Stable"},
+        {"Opera GX","\\Roaming\\Opera Software\\Opera GX Stable"},
+        {"Vivaldi", "\\Local\\Vivaldi\\User Data\\Default"},
+    };
 
-    // 1. Raw Cache Directories (String search / deletion)
-    for (const auto& dir : searchPaths) {
+    for (const auto& browser : chromiumBrowsers) {
+        std::string basePath = appData + browser.relativePath;
+        std::string historyPath = basePath + "\\History";
+        std::string cachePath = basePath + "\\Cache\\Cache_Data";
+
         std::error_code ec;
-        if (!fs::exists(dir, ec)) continue;
+        if (fs::exists(historyPath, ec) || fs::exists(cachePath, ec)) {
+            profiles.push_back({browser.name, historyPath, cachePath, false});
+        }
+    }
 
-        for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
+    // Firefox: uses a different schema and profile directory structure
+    std::string firefoxProfiles = appData + "\\Roaming\\Mozilla\\Firefox\\Profiles";
+    std::error_code ec;
+    if (fs::exists(firefoxProfiles, ec)) {
+        for (const auto& entry : fs::directory_iterator(firefoxProfiles, ec)) {
             if (ec) break;
-            if (entry.is_regular_file()) {
-                if (fileContainsTargetStrings(entry.path().string(), cacheTargets)) {
-                    engine.processTarget(entry.path().string(), TargetType::FILE_TARGET);
+            if (entry.is_directory()) {
+                std::string placesPath = entry.path().string() + "\\places.sqlite";
+                std::string cachePath = entry.path().string() + "\\cache2\\entries";
+                if (fs::exists(placesPath, ec)) {
+                    profiles.push_back({
+                        "Firefox (" + entry.path().filename().string() + ")",
+                        placesPath, cachePath, true
+                    });
                 }
             }
         }
     }
 
-    // 2. SQLite Browser History Parsing
-    std::vector<std::string> historyPaths = {
-        appData + "\\Local\\Google\\Chrome\\User Data\\Default\\History",
-        appData + "\\Local\\Microsoft\\Edge\\User Data\\Default\\History"
-    };
+    // Discord cache
+    std::string discordCache = appData + "\\Roaming\\Discord\\Cache\\Cache_Data";
+    if (fs::exists(discordCache, ec)) {
+        profiles.push_back({"Discord", "", discordCache, false});
+    }
 
-    for (const auto& db : historyPaths) {
-        std::error_code ec;
-        if (fs::exists(db, ec)) {
-            if (SQLiteParser::removeTargetsFromHistory(db, cacheTargets)) {
-                // If it modified the DB, we just log it. We don't delete the DB.
-                // We use a pseudo-target to just log the action via the engine.
-                engine.processTarget(db + "::SQLite_Parsed", TargetType::FILE_TARGET);
+    return profiles;
+}
+
+// ─── Local Application Caches ───────────────────────────────────────────────
+static void cleanLocalApplicationCaches(Engine& engine) {
+    Logger& log = Logger::instance();
+
+    const std::vector<std::string>& cacheTargets = Config::instance().getAppCacheTargets();
+    if (cacheTargets.empty()) return;
+
+    auto profiles = discoverBrowserProfiles();
+
+    for (const auto& profile : profiles) {
+        // 1. Raw Cache Directories (chunked string search + deletion)
+        if (!profile.cachePath.empty()) {
+            std::error_code ec;
+            if (fs::exists(profile.cachePath, ec)) {
+                log.log(LogLevel::DEBUG_DETAIL,
+                    "Scanning cache: " + profile.name + " (" + profile.cachePath + ")");
+
+                for (const auto& entry : fs::recursive_directory_iterator(profile.cachePath, ec)) {
+                    if (ec) break;
+                    if (entry.is_regular_file()) {
+                        if (fileContainsTargetStrings(entry.path().string(), cacheTargets)) {
+                            engine.processTarget(entry.path().string(), TargetType::FILE_TARGET);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. SQLite Browser History Parsing
+        if (!profile.historyPath.empty()) {
+            std::error_code ec;
+            if (fs::exists(profile.historyPath, ec)) {
+                log.log(LogLevel::DEBUG_DETAIL,
+                    "Parsing history: " + profile.name + " (" + profile.historyPath + ")");
+
+                bool modified = false;
+                if (profile.isFirefox) {
+                    modified = SQLiteParser::removeTargetsFromFirefoxHistory(
+                        profile.historyPath, cacheTargets, engine.IS_DRY_RUN);
+                } else {
+                    modified = SQLiteParser::removeTargetsFromHistory(
+                        profile.historyPath, cacheTargets, engine.IS_DRY_RUN);
+                }
+
+                if (modified) {
+                    engine.processTarget(
+                        profile.historyPath + "::SQLite_Parsed[" + profile.name + "]",
+                        TargetType::SYSTEM_ACTION);
+                }
             }
         }
     }
@@ -87,46 +231,63 @@ static void cleanLocalApplicationCaches(Engine& engine) {
 
 // ─── System Artifact Parsing ────────────────────────────────────────────────
 static void cleanSystemArtifacts(Engine& engine) {
+    Logger& log = Logger::instance();
     std::string prefetchDir = "C:\\Windows\\Prefetch";
-    
+
     const std::vector<std::string>& artifactTargets = Config::instance().getSystemArtifactTargets();
     if (artifactTargets.empty()) return;
 
+    // ── Prefetch file parsing ───────────────────────────────────────────────
     std::error_code ec;
     if (fs::exists(prefetchDir, ec)) {
         for (const auto& entry : fs::directory_iterator(prefetchDir, ec)) {
             if (ec) break;
             if (entry.is_regular_file() && entry.path().extension() == ".pf") {
                 if (PrefetchParser::containsTargetStrings(entry.path().string(), artifactTargets)) {
+                    // Also extract metadata for richer logging
+                    auto info = PrefetchParser::parsePrefetchFile(entry.path().string());
+                    if (info.valid) {
+                        log.log(LogLevel::DEBUG_DETAIL,
+                            "Prefetch hit: " + info.filename +
+                            " (run count: " + std::to_string(info.runCount) +
+                            ", version: " + std::to_string(info.version) + ")");
+                    }
                     engine.processTarget(entry.path().string(), TargetType::FILE_TARGET);
                 }
             }
         }
     }
 
-    // ── BAM Artifact Parsing ──
-    std::string bamRoot = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\bam\\State\\UserSettings";
-    
-    // Enumerate all SID subkeys under BAM
-    std::vector<std::string> userSIDs = Registry::enumerateSubKeys("HKLM", "SYSTEM\\CurrentControlSet\\Services\\bam\\State\\UserSettings");
-    
+    // ── BAM Artifact Parsing (case-insensitive) ─────────────────────────────
+    std::vector<std::string> userSIDs = Registry::enumerateSubKeys(
+        "HKLM", "SYSTEM\\CurrentControlSet\\Services\\bam\\State\\UserSettings");
+
     for (const auto& sid : userSIDs) {
         std::string sidKey = "SYSTEM\\CurrentControlSet\\Services\\bam\\State\\UserSettings\\" + sid;
         std::vector<std::string> bamValues = Registry::enumerateValues("HKLM", sidKey);
-        
+
         for (const auto& valueName : bamValues) {
-            // BAM values store the paths of executed programs
-            // The value name is the path itself (e.g., "\Device\HarddiskVolume3\Windows\System32\cmd.exe")
-            
             bool isTarget = false;
+
+            // Case-insensitive comparison for BAM value names
+            // BAM stores paths like "\Device\HarddiskVolume3\path\to\exe"
+            std::string valueNameLower = valueName;
+            std::transform(valueNameLower.begin(), valueNameLower.end(),
+                           valueNameLower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
             for (const auto& target : artifactTargets) {
-                // Case-insensitive check would be better here, but for simplicity we'll just check raw
-                if (valueName.find(target) != std::string::npos) {
+                std::string targetLower = target;
+                std::transform(targetLower.begin(), targetLower.end(),
+                               targetLower.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+                if (valueNameLower.find(targetLower) != std::string::npos) {
                     isTarget = true;
                     break;
                 }
             }
-            
+
             if (isTarget) {
                 std::string fullRegPath = "HKLM\\" + sidKey + "::" + valueName;
                 engine.processTarget(fullRegPath, TargetType::REGISTRY_KEY);
@@ -136,40 +297,15 @@ static void cleanSystemArtifacts(Engine& engine) {
 }
 
 // ─── Network & DNS Artifacts ────────────────────────────────────────────────
-// Dynamically load IP Helper and DNS APIs to avoid static dependencies
 
 typedef DWORD(WINAPI* DnsFlushResolverCache_func)();
 typedef DWORD(WINAPI* FlushIpNetTable_func)(DWORD dwIfIndex);
-typedef DWORD(WINAPI* GetIfTable_func)(PVOID pIfTable, PULONG pdwSize, BOOL bOrder);
-
-// Simplified MIB_IFTABLE and MIB_IFROW for GetIfTable (to avoid pulling in the massive iprtrmib.h)
-struct MIB_IFROW_SIMPLIFIED {
-    WCHAR wszName[256];
-    DWORD dwIndex;
-    DWORD dwType;
-    DWORD dwMtu;
-    DWORD dwSpeed;
-    DWORD dwPhysAddrLen;
-    BYTE  bPhysAddr[8];
-    DWORD dwAdminStatus;
-    DWORD dwOperStatus;
-    // ... padding out to the size of MIB_IFROW (approx 860 bytes in Win32)
-    // We only need the dwIndex, so we will manually parse the returned structure buffer if needed,
-    // or just rely on a standard layout.
-    BYTE padding[900]; 
-};
-
-struct MIB_IFTABLE_SIMPLIFIED {
-    DWORD dwNumEntries;
-    MIB_IFROW_SIMPLIFIED table[1];
-};
-
 
 static void cleanNetworkArtifacts(Engine& engine) {
     if (engine.IS_DRY_RUN) {
         // We cannot simulate a global flush, so we log pseudo-targets
-        engine.processTarget("Network::DNS_Resolver_Cache", TargetType::FILE_TARGET);
-        engine.processTarget("Network::ARP_Table", TargetType::FILE_TARGET);
+        engine.processTarget("Network::DNS_Resolver_Cache", TargetType::SYSTEM_ACTION);
+        engine.processTarget("Network::ARP_Table", TargetType::SYSTEM_ACTION);
         return;
     }
 
@@ -178,46 +314,33 @@ static void cleanNetworkArtifacts(Engine& engine) {
     if (hDnsApi) {
         auto DnsFlushResolverCache = reinterpret_cast<DnsFlushResolverCache_func>(
             GetProcAddress(hDnsApi, "DnsFlushResolverCache"));
-        
+
         if (DnsFlushResolverCache) {
             DnsFlushResolverCache();
-            engine.processTarget("Network::DNS_Resolver_Cache", TargetType::FILE_TARGET);
+            engine.processTarget("Network::DNS_Resolver_Cache", TargetType::SYSTEM_ACTION);
         }
         FreeLibrary(hDnsApi);
     }
 
     // 2. Flush ARP Table
+    // Brute-force approach: flush interface indices 1 through 64.
+    // This is a known robust method when iprtrmib.h headers aren't available,
+    // and avoids the complexity of parsing MIB_IFTABLE with its platform-
+    // dependent struct alignment.
     HMODULE hIpHlpApi = LoadLibraryA("iphlpapi.dll");
     if (hIpHlpApi) {
-        auto GetIfTable = reinterpret_cast<GetIfTable_func>(GetProcAddress(hIpHlpApi, "GetIfTable"));
-        auto FlushIpNetTable = reinterpret_cast<FlushIpNetTable_func>(GetProcAddress(hIpHlpApi, "FlushIpNetTable"));
+        auto FlushIpNetTable = reinterpret_cast<FlushIpNetTable_func>(
+            GetProcAddress(hIpHlpApi, "FlushIpNetTable"));
 
-        if (GetIfTable && FlushIpNetTable) {
-            ULONG size = 0;
-            // Get required size
-            if (GetIfTable(nullptr, &size, FALSE) == ERROR_INSUFFICIENT_BUFFER) {
-                std::vector<BYTE> buffer(size);
-                if (GetIfTable(buffer.data(), &size, FALSE) == NO_ERROR) {
-                    
-                    // The first 4 bytes are dwNumEntries, but we don't need it.
-                    // DWORD numEntries = *reinterpret_cast<DWORD*>(buffer.data());
-                    
-                    // In a full implementation we would use proper MIB_IFTABLE structs,
-                    // but since the structure sizes vary between x86 and x64 due to alignment,
-                    // a safer brute-force ARP flush is just to try flushing interface indices 1 through 100.
-                    // This is a known, robust hack for IP helper when headers aren't available.
-                    
-                    bool arpFlushed = false;
-                    for (DWORD i = 1; i < 100; ++i) {
-                        if (FlushIpNetTable(i) == NO_ERROR) {
-                            arpFlushed = true;
-                        }
-                    }
-
-                    if (arpFlushed) {
-                        engine.processTarget("Network::ARP_Table", TargetType::FILE_TARGET);
-                    }
+        if (FlushIpNetTable) {
+            bool arpFlushed = false;
+            for (DWORD i = 1; i <= 64; ++i) {
+                if (FlushIpNetTable(i) == NO_ERROR) {
+                    arpFlushed = true;
                 }
+            }
+            if (arpFlushed) {
+                engine.processTarget("Network::ARP_Table", TargetType::SYSTEM_ACTION);
             }
         }
         FreeLibrary(hIpHlpApi);
@@ -228,7 +351,7 @@ static void cleanNetworkArtifacts(Engine& engine) {
 void registerAll(Engine& engine) {
     engine.registerModule(
         "Local Application Caches",
-        "Parses Discord, browser caches, and logs for telemetry and tracking IDs.",
+        "Parses browser caches (Chrome, Edge, Brave, Opera, Firefox, Discord) and SQLite history databases.",
         cleanLocalApplicationCaches
     );
 

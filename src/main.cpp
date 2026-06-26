@@ -21,11 +21,19 @@ int main(int argc, char* argv[]) {
     }
 
     Shadow::Utils::setupConsole();
+    Shadow::Utils::disableQuickEdit();
 
     // ── Load Configuration ──────────────────────────────────────────────────
-    if (!Shadow::Config::instance().loadEncrypted("targets.dat")) {
+    bool configLoaded = Shadow::Config::instance().loadEncrypted("targets.dat");
+
+    // Fallback: try loading plaintext targets.txt if encrypted file fails
+    if (!configLoaded) {
+        configLoaded = Shadow::Config::instance().loadPlaintext("targets.txt");
+    }
+
+    if (!configLoaded) {
         std::cerr << "\033[33m\033[1m\n"
-                  << "  [!] WARNING: Could not load or parse 'targets.dat'.\n"
+                  << "  [!] WARNING: Could not load or parse 'targets.dat' or 'targets.txt'.\n"
                   << "  [!] Shadow is running without target specifications.\n"
                   << "\033[0m\n"
                   << "  Press Enter to continue anyway...";

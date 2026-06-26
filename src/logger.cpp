@@ -32,7 +32,24 @@ void Logger::initialize(bool isDryRun) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_initialized) return;
 
-    std::string path = Utils::getDesktopPath() + "\\shadow_simulation_log.txt";
+    // Build timestamped, mode-aware log filename
+    std::string timestamp = Utils::getCurrentDateTimeFormatted();
+    for (auto& c : timestamp) {
+        if (c == ':' || c == ' ') c = '_';
+    }
+    std::string logName = std::string("shadow_") +
+        (isDryRun ? "dryrun_" : "live_") + timestamp + ".txt";
+
+    // Try Desktop first, fall back to executable directory
+    std::string desktopPath = Utils::getDesktopPath();
+    std::string path;
+    if (desktopPath != ".") {
+        path = desktopPath + "\\" + logName;
+    } else {
+        // Fallback: write next to the executable
+        path = logName;
+    }
+
     m_logFile.open(path, std::ios::out | std::ios::trunc);
 
     if (m_logFile.is_open()) {
@@ -201,6 +218,8 @@ const char* Logger::consoleColor(LogLevel level) {
 // ─── AI Safety Prompt ───────────────────────────────────────────────────────
 
 void Logger::generateAISafetyPrompt() {
+    // All container access is under m_mutex since this is called from execute()
+    // which already holds sequential control, but we lock anyway for safety.
     std::lock_guard<std::mutex> lock(m_mutex);
 
     std::ostringstream oss;
@@ -230,8 +249,9 @@ void Logger::generateAISafetyPrompt() {
 
 const std::vector<std::pair<std::string, std::string>>&
 Logger::getSkippedItems() const {
+    // Note: safe to call without lock when engine runs modules sequentially.
+    // If ever switching back to async, this must be protected.
     return m_skippedItems;
 }
 
 } // namespace Shadow
-
