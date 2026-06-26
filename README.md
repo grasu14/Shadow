@@ -70,3 +70,6 @@ This massive update addresses critical forensic evasion flaws and stability issu
 **5. The Build Pipeline Struggles**
 - **The Problem:** During the development of this update, we faced significant hurdles getting the automated background build tools to install the required Microsoft Visual Studio C++ build tools via the CLI (winget and vs_installer). The installer silently rejected headless workloads.
 - **The Fix:** We documented the explicit requirement for manual workload installation (`Desktop development with C++`) inside the Visual Studio Installer GUI to ensure developers can successfully trigger the CMake compilation phase without background blocking.
+
+
+⚠️ATTENTION THIS TOOL ITS USED TO "SNIPE" THE APPS MEANING IN THE FOLDER WHERE U KEEP SHADOW.EXE YOU ALSO NEED TO PUT THE "TARGETS.TXT" AND EDIT IT WITH THE RIGHT FILE NAME CONTAINING .EXE AT THE END FOR EXAMPLE : "Rainmeter-4.5.26.exe"⚠️
