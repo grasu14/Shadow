@@ -34,6 +34,7 @@ public:
     /// Global simulation flag.  When true, no actual file deletions or
     /// system modifications will occur — every operation is logged only.
     bool IS_DRY_RUN = true;
+    bool IS_BACKUP_ENABLED = true;
 
     // ── Module management ───────────────────────────────────────────────────
     void                       registerModule(const std::string& name,
@@ -46,7 +47,7 @@ public:
 
     /// Runs every enabled module in registration order, wrapped in
     /// full exception handling.
-    void execute();
+    void execute(bool isPanicMode = false);
 
     /// Dry-run–aware operation.  In DRY-RUN mode the target is logged as
     /// "Would Modify".  In LIVE mode the file/directory is actually deleted

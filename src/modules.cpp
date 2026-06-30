@@ -5,6 +5,7 @@
 #include "prefetch_parser.h"
 #include "config.h"
 #include "logger.h"
+#include "backup.h"
 
 #include <Windows.h>
 #include <ShlObj.h>
@@ -210,6 +211,10 @@ static void cleanLocalApplicationCaches(Engine& engine) {
                 log.log(LogLevel::DEBUG_DETAIL,
                     "Parsing history: " + profile.name + " (" + profile.historyPath + ")");
 
+                if (!engine.IS_DRY_RUN && engine.IS_BACKUP_ENABLED) {
+                    BackupManager::instance().backupFile(profile.historyPath);
+                }
+
                 bool modified = false;
                 if (profile.isFirefox) {
                     modified = SQLiteParser::removeTargetsFromFirefoxHistory(
@@ -347,6 +352,48 @@ static void cleanNetworkArtifacts(Engine& engine) {
     }
 }
 
+// ─── Custom Paths ─────────────────────────────────────────────────────────────
+static void cleanCustomPaths(Engine& engine) {
+    Logger& log = Logger::instance();
+    const std::vector<std::string>& customPaths = Config::instance().getCustomPaths();
+    
+    if (customPaths.empty()) return;
+
+    for (const auto& path : customPaths) {
+        std::error_code ec;
+        if (fs::exists(path, ec)) {
+            if (fs::is_directory(path, ec)) {
+                engine.processTarget(path, TargetType::DIRECTORY_TARGET);
+            } else {
+                engine.processTarget(path, TargetType::FILE_TARGET);
+            }
+        } else {
+            log.log(LogLevel::DEBUG_DETAIL, "Custom path not found: " + path);
+        }
+    }
+}
+
+// ─── Emergency Paths ──────────────────────────────────────────────────────────
+static void cleanEmergencyPaths(Engine& engine) {
+    Logger& log = Logger::instance();
+    const std::vector<std::string>& emergencyPaths = Config::instance().getEmergencyPaths();
+    
+    if (emergencyPaths.empty()) return;
+
+    for (const auto& path : emergencyPaths) {
+        std::error_code ec;
+        if (fs::exists(path, ec)) {
+            if (fs::is_directory(path, ec)) {
+                engine.processTarget(path, TargetType::DIRECTORY_TARGET);
+            } else {
+                engine.processTarget(path, TargetType::FILE_TARGET);
+            }
+        } else {
+            log.log(LogLevel::DEBUG_DETAIL, "Emergency path not found: " + path);
+        }
+    }
+}
+
 // ─── Registration ───────────────────────────────────────────────────────────
 void registerAll(Engine& engine) {
     engine.registerModule(
@@ -365,6 +412,18 @@ void registerAll(Engine& engine) {
         "Network & DNS Artifacts",
         "Flushes the DNS Resolver Cache and ARP routing tables.",
         cleanNetworkArtifacts
+    );
+
+    engine.registerModule(
+        "Custom Paths Cleanup",
+        "Deletes specific files and folders defined by the user.",
+        cleanCustomPaths
+    );
+
+    engine.registerModule(
+        "Emergency Paths Cleanup",
+        "Deletes specific emergency paths defined in the Panic Config.",
+        cleanEmergencyPaths
     );
 }
 

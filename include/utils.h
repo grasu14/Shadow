@@ -5,11 +5,16 @@
 namespace Shadow {
 namespace Utils {
 
-    /// Configure the Windows console: UTF-8, ANSI escape codes, title.
-    void setupConsole();
+// ─── Console ─────────────────────────────────────────────────────────────────
+void setupConsole();
 
-    /// Returns the absolute path to the current user's Desktop folder.
-    std::string getDesktopPath();
+// ─── Filesystem helpers ──────────────────────────────────────────────────────
+std::string getDesktopPath();
+std::string openFileDialog(const wchar_t* filterName = L"Executables", const wchar_t* filterExt = L"*.exe");
+std::string openFolderDialog();
+
+// ─── Processes ───────────────────────────────────────────────────────────────
+std::vector<std::string> getRunningProcesses();
 
     /// Returns true if the process has Administrator privileges.
     bool isRunningAsAdmin();

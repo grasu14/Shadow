@@ -58,18 +58,29 @@ void Config::applyCipher(std::string& data) {
 bool Config::parseTargetContent(const std::string& content) {
     m_appCacheTargets.clear();
     m_systemArtifactTargets.clear();
+    m_customPaths.clear();
+    m_emergencyPaths.clear();
+    
+    panicKey = 0;
+    panicCtrl = false;
+    panicAlt = false;
+    panicShift = false;
 
     // Format:
     // [APP_CACHE]
-    // target1
-    // target2
     // [SYSTEM_ARTIFACTS]
-    // target3
-    // target4
+    // [CUSTOM_PATHS]
+    // [EMERGENCY_PATHS]
+    // C:\path\to\emergency
+    // [PANIC_CONFIG]
+    // KEY=80
+    // CTRL=1
+    // ALT=0
+    // SHIFT=1
 
     std::istringstream stream(content);
     std::string line;
-    int currentSection = 0; // 1 = App Cache, 2 = System Artifacts
+    int currentSection = 0; // 1 = App Cache, 2 = System Artifacts, 3 = Custom Paths, 4 = Emergency Paths, 5 = Panic Config
 
     while (std::getline(stream, line)) {
         // Strip carriage returns if present
@@ -85,16 +96,34 @@ bool Config::parseTargetContent(const std::string& content) {
         } else if (line == "[SYSTEM_ARTIFACTS]") {
             currentSection = 2;
             continue;
+        } else if (line == "[CUSTOM_PATHS]") {
+            currentSection = 3;
+            continue;
+        } else if (line == "[EMERGENCY_PATHS]") {
+            currentSection = 4;
+            continue;
+        } else if (line == "[PANIC_CONFIG]") {
+            currentSection = 5;
+            continue;
         }
 
         if (currentSection == 1) {
             m_appCacheTargets.push_back(line);
         } else if (currentSection == 2) {
             m_systemArtifactTargets.push_back(line);
+        } else if (currentSection == 3) {
+            m_customPaths.push_back(line);
+        } else if (currentSection == 4) {
+            m_emergencyPaths.push_back(line);
+        } else if (currentSection == 5) {
+            if (line.find("KEY=") == 0) panicKey = std::stoi(line.substr(4));
+            else if (line.find("CTRL=") == 0) panicCtrl = (line.substr(5) == "1");
+            else if (line.find("ALT=") == 0) panicAlt = (line.substr(4) == "1");
+            else if (line.find("SHIFT=") == 0) panicShift = (line.substr(6) == "1");
         }
     }
 
-    return (!m_appCacheTargets.empty() || !m_systemArtifactTargets.empty());
+    return true;
 }
 
 // ─── Encrypt to file (with CRC32 integrity check) ──────────────────────────
@@ -182,6 +211,14 @@ const std::vector<std::string>& Config::getAppCacheTargets() const {
 
 const std::vector<std::string>& Config::getSystemArtifactTargets() const {
     return m_systemArtifactTargets;
+}
+
+const std::vector<std::string>& Config::getCustomPaths() const {
+    return m_customPaths;
+}
+
+const std::vector<std::string>& Config::getEmergencyPaths() const {
+    return m_emergencyPaths;
 }
 
 } // namespace Shadow

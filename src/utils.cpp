@@ -5,6 +5,9 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <psapi.h>
+#include <set>
+#include <algorithm>
 
 namespace Shadow {
 namespace Utils {
@@ -14,7 +17,7 @@ namespace Utils {
 void setupConsole() {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
-    SetConsoleTitleA("Shadow v1.0");
+    SetConsoleTitleA("Shadow v.1.0.8");
 
     // Enable ANSI / Virtual-Terminal escape sequences (Windows 10+).
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -34,6 +37,119 @@ std::string getDesktopPath() {
         return std::string(path);
     }
     return ".";   // fallback to working directory
+}
+
+std::string openFileDialog(const wchar_t* filterName, const wchar_t* filterExt) {
+    std::string result = "";
+    IFileOpenDialog* pFileOpen;
+
+    // Create the FileOpenDialog object.
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, 
+            IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+
+    if (SUCCEEDED(hr)) {
+        // Set filter
+        COMDLG_FILTERSPEC rgSpec[] = { { filterName, filterExt } };
+        pFileOpen->SetFileTypes(1, rgSpec);
+
+        // Show the Open dialog box.
+        hr = pFileOpen->Show(NULL);
+        if (SUCCEEDED(hr)) {
+            IShellItem* pItem;
+            hr = pFileOpen->GetResult(&pItem);
+            if (SUCCEEDED(hr)) {
+                PWSTR pszFilePath;
+                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                if (SUCCEEDED(hr)) {
+                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                    std::string strTo(size_needed, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &strTo[0], size_needed, NULL, NULL);
+                    if(!strTo.empty() && strTo.back() == '\0') strTo.pop_back();
+
+                    // Return the full absolute path
+                    result = strTo;
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+    CoUninitialize();
+
+    return result;
+}
+
+std::string openFolderDialog() {
+    std::string result = "";
+    IFileOpenDialog* pFileOpen;
+
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, 
+            IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+
+    if (SUCCEEDED(hr)) {
+        DWORD dwOptions;
+        if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+            pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS);
+        }
+
+        if (SUCCEEDED(pFileOpen->Show(NULL))) {
+            IShellItem* pItem;
+            if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
+                PWSTR pszFilePath;
+                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
+                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                    std::string strTo(size_needed, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &strTo[0], size_needed, NULL, NULL);
+                    strTo.pop_back(); 
+                    result = strTo;
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+
+    return result;
+}
+
+// ─── Processes ───────────────────────────────────────────────────────────────
+
+std::vector<std::string> getRunningProcesses() {
+    std::set<std::string> processNames;
+    DWORD aProcesses[1024], cbNeeded, cProcesses;
+
+    if (!EnumProcesses(aProcesses, sizeof(aProcesses), &cbNeeded)) {
+        return {};
+    }
+
+    cProcesses = cbNeeded / sizeof(DWORD);
+
+    for (unsigned int i = 0; i < cProcesses; i++) {
+        if (aProcesses[i] != 0) {
+            char szProcessName[MAX_PATH] = "<unknown>";
+            HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, aProcesses[i]);
+
+            if (nullptr != hProcess) {
+                HMODULE hMod;
+                DWORD cbNeededMod;
+                if (EnumProcessModules(hProcess, &hMod, sizeof(hMod), &cbNeededMod)) {
+                    GetModuleBaseNameA(hProcess, hMod, szProcessName, sizeof(szProcessName)/sizeof(char));
+                    
+                    std::string name = szProcessName;
+                    std::string lowerName = name;
+                    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+                    if (lowerName != "<unknown>" && lowerName != "svchost.exe" && lowerName != "explorer.exe" && 
+                        lowerName != "cmd.exe" && lowerName != "conhost.exe" && lowerName != "shadow.exe" && lowerName != "smss.exe" && lowerName != "csrss.exe" && lowerName != "wininit.exe" && lowerName != "services.exe" && lowerName != "lsass.exe") {
+                        processNames.insert(name);
+                    }
+                }
+                CloseHandle(hProcess);
+            }
+        }
+    }
+    return std::vector<std::string>(processNames.begin(), processNames.end());
 }
 
 // ─── Privilege check ─────────────────────────────────────────────────────────

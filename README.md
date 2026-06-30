@@ -4,7 +4,17 @@
   <img src="src/shadow.ico" width="128" alt="Shadow Icon" />
 </p>
 
-Shadow is a modular system privacy and cleanup utility for Windows. It is designed to safely clear local application caches, browser histories, and specific system execution logs.
+Shadow is an advanced system privacy and cleanup utility for Windows. It acts as a precision tool to safely clear local application caches, browser histories, and system execution logs. Unlike broad system cleaners, Shadow relies on a highly targeted hitlist (`targets.txt`), allowing you to surgically remove traces of only the specific applications you define (e.g., `Rainmeter-4.5.26.exe`).
+
+## 🚀 Download & Installation
+
+**New Users:**  
+If this is your first time using Shadow, please download the Setup Wizard here:  
+👉 **[Download ShadowWizard_Setup.exe](https://github.com/grasu14/Shadow/releases/tag/ShadowWIZARD)**  
+The Setup Wizard will handle the complete installation, create your desktop shortcuts, and safely configure your initial environment.
+
+**Existing Users:**  
+If you already have Shadow installed on your machine, there is no need to download the Wizard! Your application will automatically detect new versions and upgrade itself seamlessly in the background using the built-in Auto-Updater.
 
 ## Features
 
@@ -71,5 +81,3 @@ This massive update addresses critical forensic evasion flaws and stability issu
 - **The Problem:** During the development of this update, we faced significant hurdles getting the automated background build tools to install the required Microsoft Visual Studio C++ build tools via the CLI (winget and vs_installer). The installer silently rejected headless workloads.
 - **The Fix:** We documented the explicit requirement for manual workload installation (`Desktop development with C++`) inside the Visual Studio Installer GUI to ensure developers can successfully trigger the CMake compilation phase without background blocking.
 
-
-⚠️ATTENTION THIS TOOL ITS USED TO "SNIPE" THE APPS MEANING IN THE FOLDER WHERE U KEEP SHADOW.EXE YOU ALSO NEED TO PUT THE "TARGETS.TXT" AND EDIT IT WITH THE RIGHT FILE NAME CONTAINING .EXE AT THE END FOR EXAMPLE : "Rainmeter-4.5.26.exe"⚠️

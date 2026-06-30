@@ -32,9 +32,11 @@
 *.app
 bin/
 
-# Log files
+# Log & Config files
 *.txt
 *.log
+*.ini
+*.dat
 !CMakeLists.txt
 
 # Visual Studio files

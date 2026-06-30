@@ -17,20 +17,33 @@ set(SOURCES
     src/engine.cpp
     src/menu.cpp
     src/utils.cpp
+    src/backup.cpp
     src/timestomp.cpp
     src/modules.cpp
     src/sqlite_parser.cpp
     src/prefetch_parser.cpp
     src/config.cpp
+    src/gui.cpp
+    src/updater.cpp
     src/shadow.rc
+    src/imgui/imgui.cpp
+    src/imgui/imgui_draw.cpp
+    src/imgui/imgui_tables.cpp
+    src/imgui/imgui_widgets.cpp
+    src/imgui/backends/imgui_impl_win32.cpp
+    src/imgui/backends/imgui_impl_dx11.cpp
 )
 
-add_executable(${PROJECT_NAME} ${SOURCES})
+add_executable(${PROJECT_NAME} WIN32 ${SOURCES})
 
 # Statically link the MSVC runtime (/MT and /MTd) so the executable runs on machines without VCRedist
 set_property(TARGET ${PROJECT_NAME} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(${PROJECT_NAME} PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/imgui/backends
+)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
@@ -39,17 +52,14 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 # ── Build-mode definitions ────────────────────────────────────────────────────
-#  Debug  -> SHADOW_DEBUG defined  (verbose scrolling console log)
-#  Release -> nothing extra        (minimalist output)
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-    $<$<CONFIG:Debug>:SHADOW_DEBUG>
-)
+# Both Debug and Release will have SHADOW_DEBUG defined to keep the hacker console
+target_compile_definitions(${PROJECT_NAME} PRIVATE SHADOW_DEBUG)
 
 # ── Windows system libraries ─────────────────────────────────────────────────
 # shell32  - SHGetFolderPathA
 # advapi32 - Registry APIs, token checks
 # bcrypt   - BCryptGenRandom (timestomp jitter)
-target_link_libraries(${PROJECT_NAME} PRIVATE shell32 advapi32 bcrypt)
+target_link_libraries(${PROJECT_NAME} PRIVATE shell32 advapi32 bcrypt d3d11 d3dcompiler dwmapi)
 
 # ── MSVC-specific flags ──────────────────────────────────────────────────────
 if(MSVC)

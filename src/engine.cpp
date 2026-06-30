@@ -2,6 +2,7 @@
 #include "logger.h"
 #include "utils.h"
 #include "timestomp.h"
+#include "backup.h"
 #include <filesystem>
 #include <iostream>
 #include <Windows.h>
@@ -49,17 +50,27 @@ const std::vector<Module>& Engine::getModules() const { return m_modules; }
 
 // ─── Main execution loop ────────────────────────────────────────────────────
 
-void Engine::execute() {
+void Engine::execute(bool isPanicMode) {
     Logger& log = Logger::instance();
-    log.initialize(IS_DRY_RUN);
+    log.initialize(IS_DRY_RUN, isPanicMode);
 
     log.log(LogLevel::INFO,
             "============================================");
     log.log(LogLevel::INFO,
             std::string("  Execution started  -  Mode: ") +
             (IS_DRY_RUN ? "DRY-RUN" : "LIVE"));
+    if (isPanicMode) {
+        log.log(LogLevel::WARNING, "  *** PANIC MODE ACTIVATED ***");
+    }
     log.log(LogLevel::INFO,
             "============================================");
+
+    if (!IS_DRY_RUN && IS_BACKUP_ENABLED && !isPanicMode) {
+        BackupManager::instance().setEnabled(true);
+        BackupManager::instance().beginSession();
+    } else {
+        BackupManager::instance().setEnabled(false);
+    }
 
     // Check that at least one module is enabled.
     bool anyEnabled = false;
@@ -121,15 +132,17 @@ void Engine::execute() {
     log.log(LogLevel::SUMMARY, "============================================");
 
     // Use mode-aware log filename with timestamp
-    std::string timestamp = Utils::getCurrentDateTimeFormatted();
-    // Replace colons and spaces for filesystem compatibility
-    for (auto& c : timestamp) {
-        if (c == ':' || c == ' ') c = '_';
+    if (!isPanicMode) {
+        std::string timestamp = Utils::getCurrentDateTimeFormatted();
+        // Replace colons and spaces for filesystem compatibility
+        for (auto& c : timestamp) {
+            if (c == ':' || c == ' ') c = '_';
+        }
+        std::string logName = std::string("shadow_") +
+            (IS_DRY_RUN ? "dryrun_" : "live_") + timestamp + ".txt";
+        std::string logPath = Utils::getDesktopPath() + "\\" + logName;
+        log.log(LogLevel::INFO, "  Log saved to: " + logPath);
     }
-    std::string logName = std::string("shadow_") +
-        (IS_DRY_RUN ? "dryrun_" : "live_") + timestamp + ".txt";
-    std::string logPath = Utils::getDesktopPath() + "\\" + logName;
-    log.log(LogLevel::INFO, "  Log saved to: " + logPath);
 
     // ── Skipped items detail ────────────────────────────────────────────────
     const auto& skipped = log.getSkippedItems();
@@ -163,6 +176,10 @@ void Engine::execute() {
     Timestomp::applyToAllPaths(m_modifiedParentPaths, IS_DRY_RUN);
     m_modifiedParentPaths.clear();
 
+    if (!IS_DRY_RUN && IS_BACKUP_ENABLED && !isPanicMode) {
+        BackupManager::instance().finalizeSession();
+    }
+
     log.shutdown();
 }
 
@@ -194,6 +211,8 @@ bool Engine::processTarget(const std::string& path, TargetType type) {
                     return false;
                 }
 
+                BackupManager::instance().backupFile(path);
+
                 fs::remove(path, ec);
                 if (ec) {
                     log.logAction(path, ActionStatus::SKIPPED,
@@ -217,6 +236,8 @@ bool Engine::processTarget(const std::string& path, TargetType type) {
                             "Directory not found: " + path);
                     return false;
                 }
+
+                BackupManager::instance().backupFile(path);
 
                 fs::remove_all(path, ec);
                 if (ec) {

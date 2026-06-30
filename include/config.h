@@ -24,12 +24,23 @@ public:
 
     const std::vector<std::string>& getAppCacheTargets() const;
     const std::vector<std::string>& getSystemArtifactTargets() const;
+    const std::vector<std::string>& getCustomPaths() const;
+    const std::vector<std::string>& getEmergencyPaths() const;
+
+    // Panic Configuration
+    int panicKey = 0; // VK code
+    bool panicCtrl = false;
+    bool panicAlt = false;
+    bool panicShift = false;
 
 private:
     Config() = default;
+    ~Config() = default;
 
     std::vector<std::string> m_appCacheTargets;
     std::vector<std::string> m_systemArtifactTargets;
+    std::vector<std::string> m_customPaths;
+    std::vector<std::string> m_emergencyPaths;
 
     /// NOTE: This is obfuscation, NOT cryptographic security.
     /// The key is embedded in the binary and extractable with a hex editor.

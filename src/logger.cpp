@@ -1,5 +1,6 @@
 #include "logger.h"
 #include "utils.h"
+#include "gui.h"
 
 #include <iostream>
 #include <sstream>
@@ -28,24 +29,29 @@ Logger::~Logger() { shutdown(); }
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
-void Logger::initialize(bool isDryRun) {
+void Logger::initialize(bool isDryRun, bool isPanicMode) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_initialized) return;
 
-    // Build timestamped, mode-aware log filename
+    if (isPanicMode) {
+        // Do NOT create a log file for Panic Mode.
+        m_initialized = true;
+        resetStats();
+        return;
+    }
+
     std::string timestamp = Utils::getCurrentDateTimeFormatted();
+    // Replace colons and spaces for filesystem compatibility
     for (auto& c : timestamp) {
         if (c == ':' || c == ' ') c = '_';
     }
+
     std::string logName = std::string("shadow_") +
         (isDryRun ? "dryrun_" : "live_") + timestamp + ".txt";
 
-    // Try Desktop first, fall back to executable directory
-    std::string desktopPath = Utils::getDesktopPath();
-    std::string path;
-    if (desktopPath != ".") {
-        path = desktopPath + "\\" + logName;
-    } else {
+    std::string path = Utils::getDesktopPath() + "\\" + logName;
+
+    // Check if desktop path is valid, else fallback
+    if (path.find("Desktop") == std::string::npos && path.length() < 5) {
         // Fallback: write next to the executable
         path = logName;
     }
@@ -154,11 +160,14 @@ void Logger::writeToFile(const std::string& entry) {
 }
 
 void Logger::writeToConsole(LogLevel level, const std::string& text) {
+    // Always feed the GUI console, regardless of build type
+    GUI::addLog(level, text);
+
 #ifdef SHADOW_DEBUG
-    // Debug build: print everything.
+    // Debug build: print everything to stdout as well
     std::cout << consoleColor(level) << text << Clr::RESET << "\n";
 #else
-    // Release build: only module headers, warnings, errors, and summaries.
+    // Release build: only print critical stuff to stdout
     switch (level) {
         case LogLevel::INFO:
         case LogLevel::WARNING:
@@ -169,7 +178,7 @@ void Logger::writeToConsole(LogLevel level, const std::string& text) {
         case LogLevel::DEBUG_DETAIL:
         case LogLevel::ACTION:
         default:
-            break;   // suppressed in Release
+            break;
     }
 #endif
 }
@@ -245,6 +254,7 @@ void Logger::generateAISafetyPrompt() {
 
     // Always print to console (both Debug and Release).
     std::cout << Clr::CYAN << block << Clr::RESET << std::endl;
+    GUI::addLog(LogLevel::SUMMARY, block);
 }
 
 const std::vector<std::pair<std::string, std::string>>&

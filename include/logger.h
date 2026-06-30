@@ -32,7 +32,7 @@ public:
 
     /// Opens shadow_simulation_log.txt on the user's desktop and writes
     /// the file header.  Must be called before any log/logAction calls.
-    void initialize(bool isDryRun);
+    void initialize(bool isDryRun, bool isPanicMode = false);
 
     /// Writes the summary footer and closes the log file.
     void shutdown();
