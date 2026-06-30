@@ -59,7 +59,18 @@ namespace Updater {
 
         std::string tag = response.substr(startQuote + 1, endQuote - startQuote - 1);
 
-        if (tag == CURRENT_VERSION || tag.empty() || tag == "Debug") return false; // Already latest or error or debug
+        auto normalizeVersion = [](const std::string& v) {
+            std::string res;
+            for (char c : v) {
+                if ((c >= '0' && c <= '9') || c == '.') res += c;
+            }
+            if (!res.empty() && res[0] == '.') res = res.substr(1);
+            return res;
+        };
+
+        if (tag.empty() || tag == "Debug" || normalizeVersion(tag) == normalizeVersion(CURRENT_VERSION)) {
+            return false; // Already latest or error or debug
+        }
 
         std::string urlKey = "\"browser_download_url\":";
         size_t urlPos = 0;

@@ -11,10 +11,16 @@ Shadow is an advanced system privacy and cleanup utility for Windows. It acts as
 **New Users:**  
 If this is your first time using Shadow, please download the Setup Wizard here:  
 👉 **[Download ShadowWizard_Setup.exe](https://github.com/grasu14/Shadow/releases/tag/ShadowWIZARD)**  
+
+⚠️ **CRITICAL WARNING:** You MUST read all the instructions provided during the Setup Wizard installation process! It contains mandatory steps for bypassing Windows Registry locks. If you do not follow the wizard instructions, Shadow will NOT function properly.
+
 The Setup Wizard will handle the complete installation, create your desktop shortcuts, and safely configure your initial environment.
 
 **Existing Users:**  
 If you already have Shadow installed on your machine, there is no need to download the Wizard! Your application will automatically detect new versions and upgrade itself seamlessly in the background using the built-in Auto-Updater.
+
+## 💬 Contact & Feedback
+If you have ideas, things that need to be added/fixed, or just have a question and want to talk, you can message me directly on Discord at: **`grasu67`**
 
 ## Features
 

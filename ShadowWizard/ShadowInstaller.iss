@@ -11,7 +11,7 @@ UninstallDisplayIcon={app}\Shadow.exe
 Compression=lzma2
 SolidCompression=yes
 LicenseFile=Terms.txt
-InfoBeforeFile=WizardInfo.txt
+InfoBeforeFile=BAM_Tutorial.txt
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64
 
